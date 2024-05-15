@@ -1,0 +1,7 @@
+requests
+playwright
+eventlet
+schedule
+cf_clearance
+pymysql
+redis
