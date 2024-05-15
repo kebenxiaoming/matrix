@@ -1,7 +1,7 @@
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.resolve()
-BASE_PATH = "D:/wwwroot/matrix-backend/storage/app/"
+BASE_PATH = "/"
 XHS_SERVER = "http://127.0.0.1:5005"
 REDIS_CONF = {
     "host":"127.0.0.1",
