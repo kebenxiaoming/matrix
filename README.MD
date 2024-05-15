@@ -107,10 +107,20 @@ python3 user_queue_login.py 1 //此字段是登陆类型：1：抖音；2：视�
 python3 publish_video_queue.py 无需参数，不区分平台，按用户发布顺序逐一发布视频
 
 ```
+四、如何获取数据
 
-四、有任何问题请在issue中留言。
+```
+1、登录二维码可以从redis中直接过去，具体获取数据方式请查阅代码
 
-五、参考项目：
+2、有时候抖音登录会出现需要发送短信的情况，也已经处理，可以从缓存获取标识来处理
+
+3、登陆的cookie都存在各个平台代码（如抖音：douyin_uploader）目录的account目录(如果没有请先创建)中，请注意需要有目录权限
+
+```
+
+五、有任何问题请在issue中留言。
+
+六、参考项目：
 - https://github.com/dreammis/social-auto-upload
 - https://github.com/wanghaisheng/tiktoka-studio-uploader
 - https://github.com/Superheroff/douyin_uplod
