@@ -12,8 +12,8 @@ REDIS_CONF = {
 MYSQL_CONF = {
     "host":"localhost",
     "port":3306,
-    "database":"quanke_matrix",
+    "database":"matrix",
     "username":"root",
-    "password":"afUn8SqpOPNQ6nOR",
+    "password":"eUVpJVuABNepux7I",
     "auto_commit":True
 }

@@ -5,3 +5,5 @@ schedule
 cf_clearance
 pymysql
 redis
+qrcode
+xhs
