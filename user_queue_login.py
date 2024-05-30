@@ -7,9 +7,10 @@ from conf import BASE_DIR,MYSQL_CONF
 from douyin_uploader.main import douyin_setup
 from tencent_uploader.main import weixin_setup
 from xhs_uploader.main import xhs_setup
+from ks_uploader.main import ks_setup
 
 parser = argparse.ArgumentParser(description='这是一个获取登录状态的脚本。') 
-parser.add_argument('type', type=int, default=1, help='登录类型:1:抖音;2:视频号')
+parser.add_argument('type', type=int, default=1, help='登录类型:1:抖音;2:视频号;3:小红书;4:快手')
 args = parser.parse_args()
 type = args.type
 error_num = 1
@@ -25,7 +26,7 @@ db_connector = pymysql.connect(
 #查询数据库处理
 while True:
     try: 
-        with db_connector.cursor() as mycursor: 
+        with db_connector.cursor() as mycursor:
             # 执行查询语句  
             mycursor.execute("SELECT id,uid,type FROM mx_account_login_queue WHERE status=0 AND type="f"{type}")  
             # 获取查询结果
@@ -46,6 +47,9 @@ while True:
                 if x[2] == 3:
                     account_file_path = Path(BASE_DIR / "xhs_uploader"/ "account")
                     cookie_setup = xhs_setup(str(account_file_path), handle=True,account_id=account_id,queue_id=queue_id)
+                if x[2] == 4:
+                    account_file_path = Path(BASE_DIR / "ks_uploader"/ "account")
+                    cookie_setup = asyncio.run(ks_setup(str(account_file_path), handle=True,account_id=account_id,queue_id=queue_id))
                 if cookie_setup:
                     # 成功更新数据
                     mycursor.execute(f"UPDATE mx_account_login_queue SET status=2 WHERE id={x[0]}")
