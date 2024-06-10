@@ -14,9 +14,9 @@ async def cookie_auth(account_file):
         # 创建一个新的页面
         page = await context.new_page()
         # 访问指定的 URL
-        await page.goto("https://creator.douyin.com/creator-micro/content/upload")
+        await page.goto("https://cp.kuaishou.com/profile")
         try:
-            await page.wait_for_selector("div.boards-more h3:text('抖音排行榜')", timeout=5000)  # 等待5秒
+            await page.wait_for_selector(".personal-info div.detail__userKwaiId:has-text('快手号')", timeout=5000)  # 等待5秒
             print("[+] 等待5秒 cookie 失效")
             return False
         except:
@@ -86,8 +86,7 @@ async def ks_cookie_gen(account_file_path, account_id="", queue_id=""):
             num = 1
             while True:
                 await asyncio.sleep(3)
-                # 判断是否有已扫码显示，如果有跳出循环
-                print(page.url)
+                # 判断是否跳转到登陆后链接，如果有跳出循环
                 if 'cp.kuaishou.com/profile' in page.url:
                     break
                 # 这里先取消身份认证
@@ -163,7 +162,7 @@ class KuaiShouVideo(object):
         self.local_executable_path = ""  # change me
         self.location = location
 
-    async def set_schedule_time_douyin(self, page, publish_date):
+    async def set_schedule_time_ks(self, page, publish_date):
         # 选择包含特定文本内容的 label 元素
         label_element = page.locator("label.radio--4Gpx6:has-text('定时发布')")
         # 在选中的 label 元素下点击 checkbox
@@ -186,64 +185,62 @@ class KuaiShouVideo(object):
     async def upload(self, playwright: Playwright) -> None:
         # 使用 Chromium 浏览器启动一个浏览器实例
         if self.local_executable_path:
-            browser = await playwright.chromium.launch(headless=True, executable_path=self.local_executable_path)
+            browser = await playwright.chromium.launch(headless=False, executable_path=self.local_executable_path)
         else:
-            browser = await playwright.chromium.launch(headless=True)
+            browser = await playwright.chromium.launch(headless=False)
         # 创建一个浏览器上下文，使用指定的 cookie 文件
         context = await browser.new_context(storage_state=f"{self.account_file}")
 
         # 创建一个新的页面
         page = await context.new_page()
         # 访问指定的 URL
-        await page.goto("https://creator.douyin.com/creator-micro/content/upload")
+        await page.goto("https://cp.kuaishou.com/article/publish/video")
         print('[+]正在上传-------{}.mp4'.format(self.title))
         # 等待页面跳转到指定的 URL，没进入，则自动等待到超时
         print('[-] 正在打开主页...')
-        await page.wait_for_url("https://creator.douyin.com/creator-micro/content/upload")
+        await page.wait_for_url("https://cp.kuaishou.com/article/publish/video")
         # 点击 "上传视频" 按钮
-        await page.locator(".upload-btn--9eZLd").set_input_files(self.file_path)
-
+        upload_div_loc = page.get_by_role("button", name="上传视频")
+        # await upload_div_loc.wait_for()
+        async with page.expect_file_chooser() as fc_info:
+            await upload_div_loc.click()
+        file_chooser = await fc_info.value
+        await file_chooser.set_files(self.file_path)
         # 等待页面跳转到指定的 URL
-        while True:
-            # 判断是是否进入视频发布页面，没进入，则自动等待到超时
-            try:
-                await page.wait_for_url(
-                    "https://creator.douyin.com/creator-micro/content/publish?enter_from=publish_page")
-                break
-            except:
-                print("  [-] 正在等待进入视频发布页面...")
-                await asyncio.sleep(0.1)
+        await asyncio.sleep(1)
 
         # 填充标题和话题
         # 检查是否存在包含输入框的元素
         # 这里为了避免页面变化，故使用相对位置定位：作品标题父级右侧第一个元素的input子元素
         await asyncio.sleep(1)
         print("  [-] 正在填充标题和话题...")
-        title_container = page.get_by_text('作品标题').locator("..").locator("xpath=following-sibling::div[1]").locator(
-            "input")
+        await page.pause()
+        title_container = page.get_by_placeholder('添加合适的话题和描述，作品能获得更多推荐～')
+        await page.pause()
         if await title_container.count():
-            await title_container.fill(self.title[:30])
-        else:
-            titlecontainer = page.locator(".notranslate")
-            await titlecontainer.click()
-            print("clear existing title")
-            await page.keyboard.press("Backspace")
-            await page.keyboard.press("Control+KeyA")
-            await page.keyboard.press("Delete")
-            print("filling new  title")
-            await page.keyboard.type(self.title)
-            await page.keyboard.press("Enter")
-        css_selector = ".zone-container"
-        for index, tag in enumerate(self.tags, start=1):
-            print("正在添加第%s个话题" % index)
-            await page.type(css_selector, "#" + tag)
-            await page.press(css_selector, "Space")
+           await title_container.click()
+           await title_container.fill(self.title[:30])
+        # else:
+        #     titlecontainer = page.locator(".notranslate")
+        #     await titlecontainer.click()
+        #     print("clear existing title")
+        #     await page.keyboard.press("Backspace")
+        #     await page.keyboard.press("Control+KeyA")
+        #     await page.keyboard.press("Delete")
+        #     print("filling new  title")
+        #     await page.keyboard.type(self.title)
+        #     await page.keyboard.press("Enter")
+        # css_selector = ".zone-container"
+        # for index, tag in enumerate(self.tags, start=1):
+        #     print("正在添加第%s个话题" % index)
+        #     await page.type(css_selector, "#" + tag)
+        #     await page.press(css_selector, "Space")
 
         while True:
             # 判断重新上传按钮是否存在，如果不存在，代表视频正在上传，则等待
             try:
                 #  新版：定位重新上传
-                number = await page.locator('div label+div:has-text("重新上传")').count()
+                number = await page.locator('span:has-text("上传成功")').count()
                 if number > 0:
                     print("  [-]视频上传完毕")
                     break
@@ -251,35 +248,27 @@ class KuaiShouVideo(object):
                     print("  [-] 正在上传视频中...")
                     await asyncio.sleep(2)
 
-                    if await page.locator('div.progress-div > div:has-text("上传失败")').count():
-                        print("  [-] 发现上传出错了...")
-                        await self.handle_upload_error(page)
+                    # if await page.locator('div.progress-div > div:has-text("上传失败")').count():
+                    #     print("  [-] 发现上传出错了...")
+                    #     await self.handle_upload_error(page)
             except:
                 print("  [-] 正在上传视频中...")
                 await asyncio.sleep(2)
 
         # 更换可见元素
-        await page.locator('div.semi-select span:has-text("输入地理位置")').click()
-        await asyncio.sleep(1)
-        print("clear existing location")
-        await page.keyboard.press("Backspace")
-        await page.keyboard.press("Control+KeyA")
-        await page.keyboard.press("Delete")
-        await page.keyboard.type(self.location)
-        await asyncio.sleep(1)
-        await page.locator('div[role="listbox"] [role="option"]').first.click()
-
-        # 頭條/西瓜
-        third_part_element = '[class^="info"] > [class^="first-part"] div div.semi-switch'
-        # 定位是否有第三方平台
-        if await page.locator(third_part_element).count():
-            # 检测是否是已选中状态
-            if 'semi-switch-checked' not in await page.eval_on_selector(third_part_element, 'div => div.className'):
-                await page.locator(third_part_element).locator('input.semi-switch-native-control').click()
+        # await page.locator('div.semi-select span:has-text("输入地理位置")').click()
+        # await asyncio.sleep(1)
+        # print("clear existing location")
+        # await page.keyboard.press("Backspace")
+        # await page.keyboard.press("Control+KeyA")
+        # await page.keyboard.press("Delete")
+        # await page.keyboard.type(self.location)
+        # await asyncio.sleep(1)
+        # await page.locator('div[role="listbox"] [role="option"]').first.click()
 
         # 定时发布
-        if self.publish_date != 0:
-            await self.set_schedule_time_douyin(page, self.publish_date)
+        # if self.publish_date != 0:
+        #     await self.set_schedule_time_ks(page, self.publish_date)
 
         # 判断视频是否发布成功
         while True:
@@ -288,7 +277,7 @@ class KuaiShouVideo(object):
                 publish_button = page.get_by_role('button', name="发布", exact=True)
                 if await publish_button.count():
                     await publish_button.click()
-                await page.wait_for_url("https://creator.douyin.com/creator-micro/content/manage",
+                await page.wait_for_url("https://cp.kuaishou.com/article/manage/video?status=2&from=publish",
                                         timeout=1500)  # 如果自动跳转到作品页面，则代表发布成功
                 print("  [-]视频发布成功")
                 break

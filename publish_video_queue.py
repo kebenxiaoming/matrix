@@ -11,6 +11,7 @@ from datetime import datetime
 from playwright.sync_api import sync_playwright
 from tencent_uploader.main import TencentVideo
 from douyin_uploader.main import DouYinVideo
+from ks_uploader.main import KuaiShouVideo
 from requests import RequestException
 from xhs import XhsClient,exception as xhs_exception
 from xhs_uploader.main import upload_xhs_video,sign
@@ -60,6 +61,32 @@ def douyin_cookie_auth(account_file,type,account_uid,account_third_id):
         page.goto("https://creator.douyin.com/creator-micro/content/upload")
         try:
             page.wait_for_selector("div.boards-more h3:text('抖音排行榜')", timeout=5000)  # 等待5秒
+            print("[+] 等待5秒 cookie 失效")
+            #失效直接删除json文件
+            deleteFile(account_file,type,account_uid,account_third_id)
+            context.close()
+            browser.close()
+            playwright.stop()
+            return False
+        except:
+            print("[+] cookie 有效")
+            context.close()
+            browser.close()
+            playwright.stop()
+            return True
+
+def ks_cookie_auth(account_file,type,account_uid,account_third_id):
+    if not os.path.exists(account_file):
+        return False
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(storage_state=account_file)
+        # 创建一个新的页面
+        page =context.new_page()
+        # 访问指定的 URL
+        page.goto("https://cp.kuaishou.com/profile")
+        try:
+            page.wait_for_selector("a.item:has-text('机构入驻')", timeout=5000)
             print("[+] 等待5秒 cookie 失效")
             #失效直接删除json文件
             deleteFile(account_file,type,account_uid,account_third_id)
@@ -152,7 +179,6 @@ def publishFail(mycursor,queue_id,status,task_queue_id):
      mycursor.execute(f"UPDATE mx_publish_task_video_queue SET status={status} WHERE id={queue_id}")
      # 父级的任务表增加一次失败次数fail_num+1
      mycursor.execute(f"UPDATE mx_publish_task_queue SET fail_num=fail_num+1 WHERE id={task_queue_id}")
-
 #查询数据库处理
 while True:
     try: 
@@ -204,6 +230,13 @@ while True:
                             publishFail(mycursor,queue_id,4,task_queue_id)
                             # 继续循环
                             continue
+                    elif type == 4:
+                        account_file = Path(BASE_DIR / "ks_uploader"/"account"/ f"{account_uid}_{account_third_id}_account.json")
+                        if ks_cookie_auth(account_file,type,account_uid,account_third_id) == False:
+                            # 登录失效将队列status改为4，相当于告诉用户重新登陆
+                            publishFail(mycursor,queue_id,4,task_queue_id)
+                            # 继续循环
+                            continue
                     else:
                         # 类型不对直接改为失败
                         publishFail(mycursor,queue_id,3,task_queue_id)
@@ -245,6 +278,14 @@ while True:
                     else:
                         # 失败改数据库为失败
                         publishFail(mycursor,queue_id,3,task_queue_id)
+                elif type == 4:
+                    # 快手视频上传
+                    app = KuaiShouVideo(video_title,get_file_absolute_path(video_path), 
+                    get_data_hashtags(video_tags),publish_datetimes,
+                    account_file,location)
+                    asyncio.run(app.main(), debug=False) 
+                    # 没问题改为成功
+                    publishSuccess(mycursor,queue_id,2,task_queue_id)  
                 else:
                     publishFail(mycursor,queue_id,3,task_queue_id) 
     except RequestException as err:
