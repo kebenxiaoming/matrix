@@ -58,7 +58,7 @@ async def douyin_cookie_gen(account_file_path,account_id="",queue_id=""):
     try:
         async with async_playwright() as playwright:
             options = {
-                'headless': True
+                'headless': False
             }
             # Make sure to run headed.
             browser = await playwright.chromium.launch(**options)

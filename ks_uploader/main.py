@@ -208,15 +208,13 @@ class KuaiShouVideo(object):
         await file_chooser.set_files(self.file_path)
         # 等待页面跳转到指定的 URL
         await asyncio.sleep(1)
-
+        known_button = page.get_by_role("button", name="我知道了")
+        if await known_button.count():
+           await known_button.click()
         # 填充标题和话题
-        # 检查是否存在包含输入框的元素
-        # 这里为了避免页面变化，故使用相对位置定位：作品标题父级右侧第一个元素的input子元素
         await asyncio.sleep(1)
         print("  [-] 正在填充标题和话题...")
-        await page.pause()
         title_container = page.get_by_placeholder('添加合适的话题和描述，作品能获得更多推荐～')
-        await page.pause()
         if await title_container.count():
            await title_container.click()
            await title_container.fill(self.title[:30])

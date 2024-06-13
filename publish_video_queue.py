@@ -18,7 +18,7 @@ from xhs_uploader.main import upload_xhs_video,sign
 from utils.files_times import get_data_hashtags
 
 # parser = argparse.ArgumentParser(description='这是一个上传视频的脚本。') 
-# parser.add_argument('type', type=int, default=1, help='登录类型:1:抖音;2:视频号')
+# parser.add_argument('type', type=int, default=1, help='登录类型:1:抖音;2:视频号;3:小红书;4:快手')
 # args = parser.parse_args()
 # type = args.type
 error_num = 1
@@ -43,6 +43,8 @@ def deleteFile(account_file,type,account_uid,account_third_id):
                 cache_delete(f"tencent_login_status_third_{account_uid}_{account_third_id}")
             elif type == 3:
                 cache_delete(f"xhs_login_status_third_{account_uid}_{account_third_id}")
+            elif type == 4:
+                cache_delete(f"ks_login_status_third_{account_uid}_{account_third_id}")
             print("文件已成功删除。")  
         except OSError as e:  
             print("删除文件时出错：", e)
@@ -74,7 +76,7 @@ def douyin_cookie_auth(account_file,type,account_uid,account_third_id):
             browser.close()
             playwright.stop()
             return True
-
+# 快手cookie校验
 def ks_cookie_auth(account_file,type,account_uid,account_third_id):
     if not os.path.exists(account_file):
         return False
@@ -167,24 +169,24 @@ db_connector = pymysql.connect(
     autocommit=MYSQL_CONF['auto_commit'],
 )
 
-def publishSuccess(mycursor,queue_id,status,task_queue_id):
+def publishSuccess(mycursor,queue_id,status):
      # 数据库更新为失败
      mycursor.execute(f"UPDATE mx_publish_task_video_queue SET status={status} WHERE id={queue_id}")
      # 父级的任务表增加一次失败次数fail_num+1
-     mycursor.execute(f"UPDATE mx_publish_task_queue SET publish_num=publish_num+1 WHERE id={task_queue_id}")
+     # mycursor.execute(f"UPDATE mx_publish_task_queue SET publish_num=publish_num+1 WHERE id={task_queue_id}")
 
 
-def publishFail(mycursor,queue_id,status,task_queue_id):
+def publishFail(mycursor,queue_id,status):
      # 数据库更新为失败
      mycursor.execute(f"UPDATE mx_publish_task_video_queue SET status={status} WHERE id={queue_id}")
      # 父级的任务表增加一次失败次数fail_num+1
-     mycursor.execute(f"UPDATE mx_publish_task_queue SET fail_num=fail_num+1 WHERE id={task_queue_id}")
+     # mycursor.execute(f"UPDATE mx_publish_task_queue SET fail_num=fail_num+1 WHERE id={task_queue_id}")
 #查询数据库处理
 while True:
     try: 
         with db_connector.cursor() as mycursor: 
             # 执行查询语句  
-            mycursor.execute("SELECT id,uid,type,account_info_id,title,tags,preview,path,url,location,publish_date,task_queue_id FROM mx_publish_task_video_queue WHERE status=0")  
+            mycursor.execute("SELECT id,uid,type,account_info_id,title,tags,preview,path,url,location,publish_date FROM mx_publish_task_video_queue WHERE status=0")  
             # 获取查询结果
             print("执行一次查询")
             for x in mycursor.fetchall():
@@ -200,7 +202,7 @@ while True:
                 video_path = x[7]
                 location = x[9] if x[9] else "重庆市"
                 publish_date = x[10]
-                task_queue_id = x[11]
+                #task_queue_id = x[11]
                 # 更新数据
                 mycursor.execute(f"UPDATE mx_publish_task_video_queue SET status=1 WHERE id={queue_id}") 
                 # 查询第三方登录用户表
@@ -213,37 +215,37 @@ while True:
                         account_file = Path(BASE_DIR / "douyin_uploader"/"account"/ f"{account_uid}_{account_third_id}_account.json")
                         if douyin_cookie_auth(account_file,type,account_uid,account_third_id) == False:
                             # 登录失效将队列status改为4，相当于告诉用户重新登陆
-                            publishFail(mycursor,queue_id,4,task_queue_id)
+                            publishFail(mycursor,queue_id,4)
                             # 继续循环
                             continue
                     elif type == 2:
                         account_file = Path(BASE_DIR / "tencent_uploader"/"account"/ f"{account_uid}_{account_third_id}_account.json")
                         if tencent_cookie_auth(account_file,type,account_uid,account_third_id) == False:
                             # 登录失效将队列status改为4，相当于告诉用户重新登陆
-                            publishFail(mycursor,queue_id,4,task_queue_id)
+                            publishFail(mycursor,queue_id,4)
                             # 继续循环
                             continue
                     elif type == 3:
                         account_file = Path(BASE_DIR / "xhs_uploader"/"account"/ f"{account_uid}_{account_third_id}_account.json")
                         if xhs_cookie_auth(account_file,type,account_uid,account_third_id) == False:
                             # 登录失效将队列status改为4，相当于告诉用户重新登陆
-                            publishFail(mycursor,queue_id,4,task_queue_id)
+                            publishFail(mycursor,queue_id,4)
                             # 继续循环
                             continue
                     elif type == 4:
                         account_file = Path(BASE_DIR / "ks_uploader"/"account"/ f"{account_uid}_{account_third_id}_account.json")
                         if ks_cookie_auth(account_file,type,account_uid,account_third_id) == False:
                             # 登录失效将队列status改为4，相当于告诉用户重新登陆
-                            publishFail(mycursor,queue_id,4,task_queue_id)
+                            publishFail(mycursor,queue_id,4)
                             # 继续循环
                             continue
                     else:
                         # 类型不对直接改为失败
-                        publishFail(mycursor,queue_id,3,task_queue_id)
+                        publishFail(mycursor,queue_id,3)
                         continue
                 except:
                     # cookie认证报错，将任务改为失败后跳过
-                    publishFail(mycursor,queue_id,3,task_queue_id) 
+                    publishFail(mycursor,queue_id,3) 
                     print(f"Error: {err}") 
                     traceback.print_exc()
                     error_num+=1 
@@ -259,14 +261,14 @@ while True:
                     account_file,location)
                     asyncio.run(app.main(), debug=False) 
                     # 没问题改为成功
-                    publishSuccess(mycursor,queue_id,2,task_queue_id)  
+                    publishSuccess(mycursor,queue_id,2)  
                 elif type == 2:
                     app = TencentVideo(video_title,get_file_absolute_path(video_path), 
                     get_data_hashtags(video_tags),publish_datetimes,
                     account_file,location)
                     asyncio.run(app.main(), debug=False) 
                     # 没问题改为成功
-                    publishSuccess(mycursor,queue_id,2,task_queue_id)
+                    publishSuccess(mycursor,queue_id,2)
                 elif type == 3:
                     # 小红书需要有封面图
                     upload_res = upload_xhs_video(video_title,get_file_absolute_path(video_path),
@@ -274,10 +276,10 @@ while True:
                     get_file_absolute_path(video_preview),account_file)
                     if upload_res:
                         # 没问题改为成功
-                        publishSuccess(mycursor,queue_id,2,task_queue_id)
+                        publishSuccess(mycursor,queue_id,2)
                     else:
                         # 失败改数据库为失败
-                        publishFail(mycursor,queue_id,3,task_queue_id)
+                        publishFail(mycursor,queue_id,3)
                 elif type == 4:
                     # 快手视频上传
                     app = KuaiShouVideo(video_title,get_file_absolute_path(video_path), 
@@ -285,30 +287,30 @@ while True:
                     account_file,location)
                     asyncio.run(app.main(), debug=False) 
                     # 没问题改为成功
-                    publishSuccess(mycursor,queue_id,2,task_queue_id)  
+                    publishSuccess(mycursor,queue_id,2)  
                 else:
-                    publishFail(mycursor,queue_id,3,task_queue_id) 
+                    publishFail(mycursor,queue_id,3) 
     except RequestException as err:
         # 更新为失败
-        publishFail(mycursor,queue_id,3,task_queue_id)
+        publishFail(mycursor,queue_id,3)
         print(f"Error: {err}") 
         traceback.print_exc()
         error_num+=1
     except db_connector.Error as err:
         # 更新为失败
-        publishFail(mycursor,queue_id,3,task_queue_id)  
+        publishFail(mycursor,queue_id,3)  
         print(f"Error: {err}") 
         traceback.print_exc()
         error_num+=1
     except BaseException as err:
         # 更新为失败
-        publishFail(mycursor,queue_id,3,task_queue_id)  
+        publishFail(mycursor,queue_id,3)  
         error_num+=1
         print(f"Error: {err}")
         traceback.print_exc()
     except:
         # 任何其他异常更新为失败
-        publishFail(mycursor,queue_id,3,task_queue_id)  
+        publishFail(mycursor,queue_id,3)  
         error_num+=1
         traceback.print_exc()
     #错误超过10次则退出脚本
