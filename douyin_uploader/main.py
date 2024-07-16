@@ -68,9 +68,9 @@ async def douyin_cookie_gen(account_file_path,account_id="",queue_id=""):
             page = await context.new_page()
             await page.goto(url="https://creator.douyin.com/",timeout=20000)
             # await page.wait_for_url(url="https://creator.douyin.com/",timeout=10000)
-            await page.locator('span.login').click()
+            # await page.locator('span.login').click() 不需要点击了
             # base64搞定
-            img_element = page.locator('div.qrcode-image-kN3ACJ img:first-child')
+            img_element = page.locator('div.account-qrcode-QvXsyd div.qrcode-image-QrGzx7 img:first-child')
             await img_element.wait_for()
             img_element_src = await img_element.get_attribute(name="src",timeout=10000)
             cache_data(f"douyin_login_ewm_{queue_id}",img_element_src)
@@ -222,9 +222,10 @@ async def douyin_cookie_gen_home(account_file_path,account_id="",queue_id=""):
         return False
 
 class DouYinVideo(object):
-    def __init__(self, title, file_path, tags, publish_date: datetime, account_file,location="重庆市"):
+    def __init__(self, title, file_path,preview_path, tags, publish_date: datetime, account_file,location="重庆市"):
         self.title = title  # 视频标题
-        self.file_path = file_path
+        self.file_path = file_path # 视频文件路径
+        self.preview_path = preview_path # 视频预览图路径
         self.tags = tags
         self.publish_date = publish_date
         self.account_file = account_file
@@ -255,9 +256,9 @@ class DouYinVideo(object):
     async def upload(self, playwright: Playwright) -> None:
         # 使用 Chromium 浏览器启动一个浏览器实例
         if self.local_executable_path:
-            browser = await playwright.chromium.launch(headless=True, executable_path=self.local_executable_path)
+            browser = await playwright.chromium.launch(headless=False, executable_path=self.local_executable_path)
         else:
-            browser = await playwright.chromium.launch(headless=True)
+            browser = await playwright.chromium.launch(headless=False)
         # 创建一个浏览器上下文，使用指定的 cookie 文件
         context = await browser.new_context(storage_state=f"{self.account_file}")
 
@@ -325,7 +326,20 @@ class DouYinVideo(object):
             except:
                 print("  [-] 正在上传视频中...")
                 await asyncio.sleep(2)
-
+        # 视频呢上传完毕后处理视频预览图
+        await asyncio.sleep(5)
+        await page.get_by_text("替换").click()
+        await asyncio.sleep(1)
+        await page.get_by_text("上传封面").click()
+        preview_upload_div_loc = page.locator("div.semi-upload-drag-area")
+        # await upload_div_loc.wait_for()
+        async with page.expect_file_chooser() as fc_info:
+            await preview_upload_div_loc.click()
+        preview_file_chooser = await fc_info.value
+        await preview_file_chooser.set_files(self.preview_path)
+        await asyncio.sleep(3)
+        await page.get_by_role("button", name="完成").click()
+        # 处理完预览图后
         # 更换可见元素
         await page.locator('div.semi-select span:has-text("输入地理位置")').click()
         await asyncio.sleep(1)
@@ -357,14 +371,19 @@ class DouYinVideo(object):
                 if await publish_button.count():
                     await publish_button.click()
                 await page.wait_for_url("https://creator.douyin.com/creator-micro/content/manage",
-                                        timeout=1500)  # 如果自动跳转到作品页面，则代表发布成功
+                                        timeout=5000)  # 如果自动跳转到作品页面，则代表发布成功
                 print("  [-]视频发布成功")
                 break
             except:
-                print("  [-] 视频正在发布中...")
-                await page.screenshot(full_page=True)
-                await asyncio.sleep(0.5)
-
+                # 如果页面是管理页面代表发布成功
+                current_url = page.url
+                if "https://creator.douyin.com/creator-micro/content/manage" in current_url:
+                    print("  [-]视频发布成功")
+                    break
+                else:        
+                    print("  [-] 视频正在发布中...")
+                    # await page.screenshot(full_page=True) 取消截屏
+                    await asyncio.sleep(0.5)
         await context.storage_state(path=self.account_file)  # 保存cookie
         print('  [-]cookie更新完毕！')
         await asyncio.sleep(2)  # 这里延迟是为了方便眼睛直观的观看

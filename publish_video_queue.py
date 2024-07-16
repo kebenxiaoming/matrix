@@ -62,7 +62,7 @@ def douyin_cookie_auth(account_file,type,account_uid,account_third_id):
         # 访问指定的 URL
         page.goto("https://creator.douyin.com/creator-micro/content/upload")
         try:
-            page.wait_for_selector("div.boards-more h3:text('抖音排行榜')", timeout=5000)  # 等待5秒
+            page.wait_for_selector("div:text('我是创作者')", timeout=5000)  # 等待5秒
             print("[+] 等待5秒 cookie 失效")
             #失效直接删除json文件
             deleteFile(account_file,type,account_uid,account_third_id)
@@ -256,7 +256,7 @@ while True:
                 else:
                     publish_datetimes = 0
                 if type == 1:
-                    app = DouYinVideo(video_title,get_file_absolute_path(video_path), 
+                    app = DouYinVideo(video_title,get_file_absolute_path(video_path),get_file_absolute_path(video_preview), 
                     get_data_hashtags(video_tags),publish_datetimes,
                     account_file,location)
                     asyncio.run(app.main(), debug=False) 
