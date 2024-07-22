@@ -263,7 +263,7 @@ while True:
                     # 没问题改为成功
                     publishSuccess(mycursor,queue_id,2)  
                 elif type == 2:
-                    app = TencentVideo(video_title,get_file_absolute_path(video_path), 
+                    app = TencentVideo(video_title,get_file_absolute_path(video_path),get_file_absolute_path(video_preview),
                     get_data_hashtags(video_tags),publish_datetimes,
                     account_file,location)
                     asyncio.run(app.main(), debug=False) 

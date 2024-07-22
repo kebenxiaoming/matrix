@@ -127,9 +127,10 @@ async def weixin_setup(account_file_path, handle=False ,account_id="",queue_id="
 
 
 class TencentVideo(object):
-    def __init__(self, title, file_path, tags, publish_date: datetime, account_file,location="重庆市",is_original=False,category="知识"):
+    def __init__(self, title, file_path,video_preview,tags, publish_date, account_file,location="重庆市",is_original=False,category="知识"):
         self.title = title  # 视频标题
-        self.file_path = file_path
+        self.file_path = file_path # 视频文件路径
+        self.video_preview = video_preview # 视频预览图路径
         self.tags = tags
         self.publish_date = publish_date
         self.account_file = account_file
@@ -275,7 +276,28 @@ class TencentVideo(object):
                         'class')
                 if "weui-desktop-btn_disabled" not in button_info:
                     print("  [-]视频上传完毕")
-                    break
+                    # 上传完毕修改封面图
+                    # 等待处理完预览图
+                    await asyncio.sleep(2)
+                    preview_button_info = await page.locator('div.finder-tag-wrap.btn:has-text("更换封面")').get_attribute(
+                                    'class')
+                    if "disabled" not in preview_button_info:
+                        await page.locator('div.finder-tag-wrap.btn:has-text("更换封面")').click()
+                        await page.locator('div.single-cover-uploader-wrap > div.wrap').hover()
+                        if await page.locator(".del-wrap > .svg-icon").count():
+                            await page.locator(".del-wrap > .svg-icon").click()
+                        preview_upload_div_loc = page.locator("div.single-cover-uploader-wrap > div.wrap")
+                        #await upload_div_loc.wait_for()
+                        async with page.expect_file_chooser() as fc_info:
+                            await preview_upload_div_loc.click()
+                        preview_file_chooser = await fc_info.value
+                        await preview_file_chooser.set_files(self.video_preview)
+                        #await page.locator('div.single-cover-uploader-wrap > input').set_input_files(self.video_preview)
+                        await asyncio.sleep(2)
+                        await page.get_by_role("button", name="确定").click()
+                        await asyncio.sleep(1)
+                        await page.get_by_role("button", name="确认").click()
+                        break
                 else:
                     print("  [-] 正在上传视频中...")
                     await asyncio.sleep(2)
