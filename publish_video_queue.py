@@ -282,7 +282,7 @@ while True:
                         publishFail(mycursor,queue_id,3)
                 elif type == 4:
                     # 快手视频上传
-                    app = KuaiShouVideo(video_title,get_file_absolute_path(video_path), 
+                    app = KuaiShouVideo(video_title,get_file_absolute_path(video_path),get_file_absolute_path(video_preview),
                     get_data_hashtags(video_tags),publish_datetimes,
                     account_file,location)
                     asyncio.run(app.main(), debug=False) 

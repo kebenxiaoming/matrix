@@ -222,7 +222,7 @@ async def douyin_cookie_gen_home(account_file_path,account_id="",queue_id=""):
         return False
 
 class DouYinVideo(object):
-    def __init__(self, title, file_path,preview_path, tags, publish_date: datetime, account_file,location="重庆市"):
+    def __init__(self, title, file_path,preview_path, tags, publish_date, account_file,location="重庆市"):
         self.title = title  # 视频标题
         self.file_path = file_path # 视频文件路径
         self.preview_path = preview_path # 视频预览图路径

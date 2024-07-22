@@ -152,9 +152,10 @@ async def ks_cookie_gen(account_file_path, account_id="", queue_id=""):
         traceback.print_exc()
         return False
 class KuaiShouVideo(object):
-    def __init__(self, title, file_path, tags, publish_date: datetime, account_file, location="重庆市"):
+    def __init__(self, title, file_path, video_preview, tags, publish_date, account_file, location="重庆市"):
         self.title = title  # 视频标题
-        self.file_path = file_path
+        self.file_path = file_path # 视频文件
+        self.video_preview = video_preview # 视频预览图
         self.tags = tags
         self.publish_date = publish_date
         self.account_file = account_file
@@ -195,7 +196,7 @@ class KuaiShouVideo(object):
         page = await context.new_page()
         # 访问指定的 URL
         await page.goto("https://cp.kuaishou.com/article/publish/video")
-        print('[+]正在上传-------{}.mp4'.format(self.title))
+        print('[+]正在上传-------{}'.format(self.title))
         # 等待页面跳转到指定的 URL，没进入，则自动等待到超时
         print('[-] 正在打开主页...')
         await page.wait_for_url("https://cp.kuaishou.com/article/publish/video")
@@ -253,17 +254,18 @@ class KuaiShouVideo(object):
                 print("  [-] 正在上传视频中...")
                 await asyncio.sleep(2)
 
-        # 更换可见元素
-        # await page.locator('div.semi-select span:has-text("输入地理位置")').click()
-        # await asyncio.sleep(1)
-        # print("clear existing location")
-        # await page.keyboard.press("Backspace")
-        # await page.keyboard.press("Control+KeyA")
-        # await page.keyboard.press("Delete")
-        # await page.keyboard.type(self.location)
-        # await asyncio.sleep(1)
-        # await page.locator('div[role="listbox"] [role="option"]').first.click()
-
+        # 修改预览图
+        await page.get_by_role("button", name="编辑封面").click()
+        await asyncio.sleep(1)
+        await page.get_by_role("tab", name="上传封面").click()
+        preview_upload_div_loc = page.get_by_role("tabpanel", name="上传封面").locator("div").nth(1)
+        # await upload_div_loc.wait_for()
+        async with page.expect_file_chooser() as fc_info:
+            await preview_upload_div_loc.click()
+        preview_file_chooser = await fc_info.value
+        await preview_file_chooser.set_files(self.video_preview)
+        await page.get_by_role("button", name="确认").click()
+        await asyncio.sleep(5)  # 这里延迟是为了方便预览图上传
         # 定时发布
         # if self.publish_date != 0:
         #     await self.set_schedule_time_ks(page, self.publish_date)
