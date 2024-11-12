@@ -2,6 +2,7 @@
 import asyncio
 import redis
 import traceback  
+import os
 from datetime import datetime
 from conf import REDIS_CONF
 from playwright.async_api import Playwright, async_playwright
@@ -235,7 +236,7 @@ class DouYinVideo(object):
 
     async def set_schedule_time_douyin(self, page, publish_date):
         # 选择包含特定文本内容的 label 元素
-        label_element = page.locator("label.radio--4Gpx6:has-text('定时发布')")
+        label_element = page.locator("label.radio-d4zkru:has-text('定时发布')")
         # 在选中的 label 元素下点击 checkbox
         await label_element.click()
         await asyncio.sleep(1)
@@ -271,8 +272,18 @@ class DouYinVideo(object):
         print('[-] 正在打开主页...')
         await page.wait_for_url("https://creator.douyin.com/creator-micro/content/upload")
         # 点击 "上传视频" 按钮
-        await page.locator(".upload-btn--9eZLd").set_input_files(self.file_path)
-
+        upload_div_loc = page.locator("div.container-drag-info-Tl0RGH").first
+        async with page.expect_file_chooser() as video_fc_info:
+            await upload_div_loc.click()
+        video_file_chooser = await video_fc_info.value
+        if not os.path.exists(self.file_path):
+            print(f"上传的视频文件不存在，路径是{self.file_path}")
+            # 关闭浏览器上下文和浏览器实例
+            await context.close()
+            await browser.close()
+            await playwright.stop()
+            return False
+        await video_file_chooser.set_files(self.file_path)
         # 等待页面跳转到指定的 URL
         while True:
             # 判断是是否进入视频发布页面，没进入，则自动等待到超时
@@ -312,7 +323,7 @@ class DouYinVideo(object):
             # 判断重新上传按钮是否存在，如果不存在，代表视频正在上传，则等待
             try:
                 #  新版：定位重新上传
-                number = await page.locator('div label+div:has-text("重新上传")').count()
+                number = await page.locator("label").filter(has_text="重新上传").count()
                 if number > 0:
                     print("  [-]视频上传完毕")
                     break
@@ -326,19 +337,24 @@ class DouYinVideo(object):
             except:
                 print("  [-] 正在上传视频中...")
                 await asyncio.sleep(2)
-        # 视频呢上传完毕后处理视频预览图
+        # 点击去掉我知道了
+        known_count = await page.get_by_role("button", name="我知道了").count()
+        if known_count > 0:
+           await page.get_by_role("button", name="我知道了").nth(0).click()
+        # 视频呢上传完毕后处理视频预览图--20241112封面图生成有问题，暂时不替换
         await asyncio.sleep(5)
-        await page.get_by_text("替换").click()
-        await asyncio.sleep(1)
-        await page.get_by_text("上传封面").click()
-        preview_upload_div_loc = page.locator("div.semi-upload-drag-area")
-        # await upload_div_loc.wait_for()
-        async with page.expect_file_chooser() as fc_info:
-            await preview_upload_div_loc.click()
-        preview_file_chooser = await fc_info.value
-        await preview_file_chooser.set_files(self.preview_path)
-        await asyncio.sleep(3)
-        await page.get_by_role("button", name="完成").click()
+        # await page.get_by_text("选择封面").click()
+        # await asyncio.sleep(1)
+        # await page.get_by_text("上传封面").click()
+        # await asyncio.sleep(3)
+        # preview_upload_div_loc = page.locator("div.semi-upload-drag-area")
+        # # await upload_div_loc.wait_for()
+        # async with page.expect_file_chooser() as fc_info:
+        #     await preview_upload_div_loc.click()
+        # preview_file_chooser = await fc_info.value
+        # await preview_file_chooser.set_files(self.preview_path)
+        # await asyncio.sleep(3)
+        # await page.get_by_role("button", name="完成").click()
         # 处理完预览图后
         # 更换可见元素
         await page.locator('div.semi-select span:has-text("输入地理位置")').click()
