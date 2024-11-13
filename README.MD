@@ -92,6 +92,10 @@ python3 publish_video_queue.py 无需参数，不区分平台，按用户发布�
 
 五、有任何问题请在issue中留言。
 
+另外有一个新建微信群，可以考虑加入：
+
+<img src="image/qrcode.jpg" width="300">
+
 六、参考项目：
 - https://github.com/dreammis/social-auto-upload
 - https://github.com/wanghaisheng/tiktoka-studio-uploader
