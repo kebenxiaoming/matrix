@@ -94,7 +94,7 @@ python3 publish_video_queue.py 无需参数，不区分平台，按用户发布�
 
 另外有一个微信交流群，有问题可以群里沟通：
 
-<img src="image/qrcode6.jpg" width="300">
+<img src="image/qrcode7.jpg" width="300">
 
 六、参考项目：
 - https://github.com/dreammis/social-auto-upload
