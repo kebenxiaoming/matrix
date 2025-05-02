@@ -71,7 +71,7 @@ async def douyin_cookie_gen(account_file_path,account_id="",queue_id=""):
             # await page.wait_for_url(url="https://creator.douyin.com/",timeout=10000)
             # await page.locator('span.login').click() 不需要点击了
             # base64搞定
-            img_element = page.locator('div.account-qrcode-QvXsyd div.qrcode-image-QrGzx7 img:first-child')
+            img_element = page.locator('div.animate_qrcode_container-McbDRI div.qrcode-vz0gH7 img:first-child')
             await img_element.wait_for()
             img_element_src = await img_element.get_attribute(name="src",timeout=10000)
             cache_data(f"douyin_login_ewm_{queue_id}",img_element_src)
@@ -130,8 +130,8 @@ async def douyin_cookie_gen(account_file_path,account_id="",queue_id=""):
                 third_id = third_id_cont.split("：")[1]
                 user_info = {
                     'account_id':third_id,#抖音号
-                    'username':await page.locator("div.rNsML").inner_text(),#用户名
-                    'avatar':await page.locator("div.t4cTN img").nth(0).get_attribute("src")#头像
+                    'username':await page.locator("div.name-_lSSDc").inner_text(),#用户名
+                    'avatar':await page.locator("div.avatar-XoPjK6  img").nth(0).get_attribute("src")#头像
                 }
                 account_file = f"{account_file_path}/{account_id}_{third_id}_account.json"
                 # 保存cookie
@@ -289,7 +289,7 @@ class DouYinVideo(object):
             # 判断是是否进入视频发布页面，没进入，则自动等待到超时
             try:
                 await page.wait_for_url(
-                    "https://creator.douyin.com/creator-micro/content/publish?enter_from=publish_page")
+                    "https://creator.douyin.com/creator-micro/content/post/video?enter_from=publish_page")
                 break
             except:
                 print("  [-] 正在等待进入视频发布页面...")
@@ -323,7 +323,7 @@ class DouYinVideo(object):
             # 判断重新上传按钮是否存在，如果不存在，代表视频正在上传，则等待
             try:
                 #  新版：定位重新上传
-                number = await page.locator("label").filter(has_text="重新上传").count()
+                number = await page.locator("div").filter(has_text="重新上传").count()
                 if number > 0:
                     print("  [-]视频上传完毕")
                     break

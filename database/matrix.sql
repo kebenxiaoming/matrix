@@ -60,9 +60,9 @@ CREATE TABLE `mx_account_login_queue`  (
 -- ----------------------------
 -- Records of mx_account_login_queue
 -- ----------------------------
-INSERT INTO `mx_account_login_queue` VALUES (70, 1, 4, 2, 1718269235, 1718269235);
-INSERT INTO `mx_account_login_queue` VALUES (71, 1, 1, 2, 1718269235, 1718269235);
-INSERT INTO `mx_account_login_queue` VALUES (72, 1, 2, 2, 1718269235, 1718269235);
+INSERT INTO `mx_account_login_queue` VALUES (70, 1, 4, 0, 1718269235, 1718269235);
+INSERT INTO `mx_account_login_queue` VALUES (71, 1, 1, 0, 1718269235, 1718269235);
+INSERT INTO `mx_account_login_queue` VALUES (72, 1, 2, 0, 1718269235, 1718269235);
 
 -- ----------------------------
 -- Table structure for mx_publish_task_video_queue
