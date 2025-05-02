@@ -58,9 +58,9 @@ MYSQL_CONF : Mysql配置（用于登录或发送视频数据库队列）
 ```
 python3 user_queue_login.py 1 //此字段是登陆类型：1：抖音；2：视频号；3：小红书；4：快手
 
-注：小红书登录需要开启flask的请求服务，用来获取小红书的x-s和x-t
+注：
 
-需要将xhs-api目录下的app2024.py服务先启动。
+小红书登录需要开启flask的请求服务，用来获取小红书的x-s和x-t需要将xhs-api目录下的app2024.py服务先启动。
 
 ```
 
@@ -76,6 +76,8 @@ python3 publish_video_queue.py 无需参数，不区分平台，按用户发布�
 <b>注意，如果为False的时候在linux下运行需要安装xvfb-run来运行脚本</b>
 
 <b>注意，本脚本运行需要Mysql和Redis，请先开启</b>
+
+<b>注意，修改代码需要了解css知识，如果代码有问题，一般是css选择器不匹配可以自行修改</b>
 
 四、如何获取数据
 
