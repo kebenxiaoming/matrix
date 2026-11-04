@@ -2,11 +2,65 @@
 from datetime import datetime
 from playwright.async_api import Playwright, async_playwright
 import os
+import re
+import time
 import asyncio
-import redis
+import subprocess
+import sys
 
-from conf import REDIS_CONF
 from utils.files_times import get_absolute_path
+from utils.cache_store import cache_data
+from utils.browser_login import LoginAborted, pick_id_by_cookies, wait_for_login
+from utils.browser_mode import headless_enabled
+from utils.login_diag import report, report_exc
+
+LOGIN_TIMEOUT = 300
+# 最近一次登录失败原因，桌面端会读取展示
+LAST_LOGIN_ERROR = ""
+
+WEIXIN_LOGIN_URL = "https://channels.weixin.qq.com/platform/login-for-iframe?dark_mode=true&host_type=1"
+WEIXIN_PLATFORM_URL = "https://channels.weixin.qq.com/platform"
+
+
+def _find_chrome() -> str:
+    """视频号上传依赖系统 Chrome（h264 编码支持），找不到就回退内置 Chromium。
+
+    返回 Chrome 可执行文件路径；空串表示没有可用 Chrome。
+    用路径而不是 channel 名启动：部分 Playwright 版本识别不到新版 Chrome 的注册信息，
+    channel="chrome" 会直接报 "Chromium distribution 'chrome' is not found"。
+    """
+    override = (os.environ.get("MATRIX_TENCENT_CHANNEL") or "").strip()
+    if override:
+        if override.lower() in ("none", "off", "0"):
+            return ""
+        if os.path.exists(override):
+            return override
+        # 形如 "chrome" 之类的别名，继续走下面的自动探测
+    if sys.platform.startswith("win"):
+        candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                         r"Google\Chrome\Application\chrome.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                         r"Google\Chrome\Application\chrome.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA",
+                                        os.path.expanduser(r"~\AppData\Local")),
+                         r"Google\Chrome\Application\chrome.exe"),
+        ]
+        for path in candidates:
+            if path and os.path.exists(path):
+                return path
+        return ""
+    try:
+        out = subprocess.run(
+            ["which", "google-chrome"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=3, check=True,
+        ).stdout.decode().strip()
+        return out if out and os.path.exists(out) else ""
+    except Exception:
+        return ""
+
 
 
 def format_str_for_short_title(origin_title: str) -> str:
@@ -31,7 +85,7 @@ def format_str_for_short_title(origin_title: str) -> str:
 
 async def cookie_auth(account_file):
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+        browser = await playwright.chromium.launch(headless=True, channel="chromium")
         context = await browser.new_context(storage_state=account_file)
         # 创建一个新的页面
         page = await context.new_page()
@@ -45,79 +99,220 @@ async def cookie_auth(account_file):
             print("[+] cookie 有效")
             return True
 
-def cache_data(key:str,value:str,timeout=60)->None:
-    if REDIS_CONF["password"]:
-        redis_client = redis.Redis(host=REDIS_CONF["host"], port=REDIS_CONF["port"], db=REDIS_CONF["select_db"],password=REDIS_CONF["password"])
-    else:
-        redis_client = redis.Redis(host=REDIS_CONF["host"], port=REDIS_CONF["port"], db=REDIS_CONF["select_db"])
-    redis_client.set(key, value)
-    redis_client.expire(key, timeout)
+async def _weixin_logged_in(page) -> bool:
+    """快速判断：只有页面自己已经跳到 /platform 才算登录成功。"""
+    try:
+        url = page.url
+    except Exception:
+        return False
+    if "login" in url:
+        return False
+    return WEIXIN_PLATFORM_URL in url
+
+
+async def _weixin_probe(page) -> bool:
+    """另开一页访问视频号后台，被弹回 login.html 就说明还没登录。
+
+    ``login-for-iframe`` 是给 iframe 内嵌用的登录页，扫码成功后它**自己不会跳转**，
+    只向父窗口发消息。所以既不能等 URL 变化，也不能等页面元素——原实现用
+    ``div.qrcode`` 之类的选择器，改版后直接失效，用户扫完码界面仍显示"未登录"。
+    这里改成用同一个 context 里的 cookie 另开一页实测，最可靠。
+    """
+    context = page.context
+    try:
+        probe = await context.new_page()
+    except Exception as exc:  # 浏览器已被关闭
+        raise LoginAborted("登录窗口被关闭了，请重新点击「去登录」") from exc
+    try:
+        await probe.goto(WEIXIN_PLATFORM_URL, timeout=20000, wait_until="domcontentloaded")
+        await probe.wait_for_timeout(2000)
+        return await _weixin_logged_in(probe)
+    except Exception:
+        return False
+    finally:
+        try:
+            await probe.close()
+        except Exception:
+            pass
+        # 把焦点还给扫码页，别让用户对着探测页发愣
+        try:
+            await page.bring_to_front()
+        except Exception:
+            pass
+
+
+def _build_weixin_check():
+    """给 wait_for_login 用的检测回调。
+
+    登录页在扫码前整个域一个 cookie 都没有，所以「出现 cookie」≈ 已经扫码；
+    出现 cookie 后每 4 秒实测一次后台，没 cookie 时放宽到 30 秒，
+    避免对着一个还没人扫的页面反复开标签页。
+    """
+    state = {"next": 0.0, "notified": False}
+
+    async def check(page) -> bool:
+        if await _weixin_logged_in(page):
+            return True
+        try:
+            cookies = await page.context.cookies()
+        except Exception:
+            return False
+        if cookies and not state["notified"]:
+            state["notified"] = True
+            report("已扫码，请在手机上点「确认登录」")
+        now = time.time()
+        if now < state["next"]:
+            return False
+        state["next"] = now + (4.0 if cookies else 30.0)
+        return await _weixin_probe(page)
+
+    return check
+
+
+async def _read_weixin_identity(page, cookies) -> dict:
+    """读取视频号 ID / 昵称 / 头像；读不到就留空，不影响发布。"""
+    third_id = ""
+    username = ""
+    avatar = ""
+
+    try:
+        # 注意：登录页 URL 是 /platform/login-for-iframe，同样包含 /platform，
+        # 不能只看 "/platform in url" 判断是否已在控制台，否则永远不会跳转。
+        if "login" in page.url or WEIXIN_PLATFORM_URL not in page.url:
+            await page.goto(WEIXIN_PLATFORM_URL, timeout=30000)
+        # 控制台是重 SPA，首屏 3 秒往往渲染不完，等具体元素出现再读
+        try:
+            await page.wait_for_selector(
+                "h2.finder-nickname, span.finder-uniq-id, img.avatar", timeout=15000
+            )
+        except Exception:
+            pass
+        await page.wait_for_timeout(800)
+    except Exception:
+        pass
+
+    for selector in ("span.finder-uniq-id", "span[class*='uniq-id']"):
+        try:
+            locator = page.locator(selector).first
+            if await locator.count() and await locator.is_visible():
+                third_id = (await locator.inner_text()).strip()
+                if third_id:
+                    break
+        except Exception:
+            continue
+
+    if not third_id:
+        try:
+            text = await page.evaluate("() => (document.body && document.body.innerText) || ''")
+            match = re.search(r"(?:视频号|微信号)[:：]\s*([A-Za-z0-9_.\-]{3,})", text or "")
+            if match:
+                third_id = match.group(1)
+        except Exception:
+            pass
+
+    for selector in ("h2.finder-nickname", "h2[class*='nickname']", "span[class*='nickname']"):
+        try:
+            locator = page.locator(selector).first
+            if await locator.count() and await locator.is_visible():
+                text = (await locator.inner_text()).strip()
+                if text and len(text) <= 40:
+                    username = text
+                    break
+        except Exception:
+            continue
+
+    if not avatar:
+        try:
+            locator = page.locator("img.avatar").first
+            if await locator.count():
+                avatar = await locator.get_attribute("src") or ""
+        except Exception:
+            pass
+
+    # 页面结构会变，再兜一层：从 localStorage / 页面文本里捞昵称和视频号 ID
+    if not third_id or not username:
+        try:
+            bag = await page.evaluate(
+                """() => {
+                    const out = {};
+                    try {
+                        for (const k of Object.keys(localStorage)) {
+                            out[k] = localStorage.getItem(k) || '';
+                        }
+                    } catch (e) {}
+                    return out;
+                }"""
+            )
+        except Exception:
+            bag = {}
+        joined = "\n".join(f"{k}={v}" for k, v in (bag or {}).items())
+        if not username:
+            match = re.search(r'"(?:nickname|nickName)"\s*:\s*"([^"]{1,40})"', joined)
+            if match:
+                username = match.group(1)
+        if not third_id:
+            match = re.search(r'"(?:uniqId|uniq_id|finderId)"\s*:\s*"([A-Za-z0-9_.\-]{3,})"', joined)
+            if match:
+                third_id = match.group(1)
+
+    if not third_id:
+        third_id = pick_id_by_cookies(cookies, ("wxuin", "bizuin"))
+
+    return {"account_id": third_id, "username": username, "avatar": avatar}
+
 
 async def save_storage_state(account_file_path: str,account_id:str,queue_id:str):
+    global LAST_LOGIN_ERROR
+    LAST_LOGIN_ERROR = ""
     try:
         async with async_playwright() as playwright:
-            options = {
-                'headless': False
-            }
-            # Make sure to run headed.
-            browser = await playwright.chromium.launch(**options)
-            # Setup context however you like.
-            context = await browser.new_context()  # Pass any options
-            # Pause the page, and start recording manually.
+            browser = await playwright.chromium.launch(headless=False)
+            context = await browser.new_context()
             page = await context.new_page()
-            # 加载首页
-            await page.goto("https://channels.weixin.qq.com/platform/login-for-iframe?dark_mode=true&host_type=1")
-            await page.locator('.qrcode').click()
-            # 加载扫码页
-            img_element = await page.locator('img.qrcode').get_attribute("src")
-            # 将id和base64的关系存到redis
-            cache_data(f"tencent_login_ewm_{queue_id}",img_element)
-            # 等待过程换成循环，然后同时检测状态
-            num = 1
-            success_img_div = page.locator(".mask").first
-            success_show_class = await success_img_div.get_attribute("class")
-            while True:
-                await asyncio.sleep(3)
-                # 判断是否有已扫码显示，如果有跳出循环
-                success_show_class = await success_img_div.get_attribute("class")
-                if "show" in success_show_class:
-                    # 保存记录一下说明已经扫码
-                    cache_data(f"tencent_login_scan_{queue_id}",1,6)
-                    break
-                if num > 13:
-                    break
-                num+=1
-            # 等待用户点击，再过6秒刷新页面然后保存cookie
-            await asyncio.sleep(6)
-            # 判断cookie长度过短说明没登录，无需保存
+            # 登录页会自己跳到 channels.weixin.qq.com/login.html，二维码在 iframe 里
+            await page.goto(WEIXIN_LOGIN_URL, timeout=30000)
+            report("视频号登录页已打开，请用微信扫码登录")
+
+            ok = await wait_for_login(
+                context, page,
+                success_check=_build_weixin_check(),
+                timeout=LOGIN_TIMEOUT,
+            )
+            if not ok:
+                LAST_LOGIN_ERROR = f"等待扫码超时（{LOGIN_TIMEOUT} 秒），没有检测到登录状态"
+                report(LAST_LOGIN_ERROR, "ERROR")
+                return False
+
+            report("已检测到视频号登录成功，正在保存登录信息…")
+            cache_data(f"tencent_login_scan_{queue_id}", 1, 6)
+
             cookies = await context.cookies()
-            # 默认没获取到用户信息
-            user_info = False
-            # 保存cookie长度不大于30不保存
-            if len(cookies) > 0:
-                # 查找用户信息
-                page = await context.new_page()
-                await page.goto("https://channels.weixin.qq.com/platform")
-                await page.wait_for_url("https://channels.weixin.qq.com/platform")
-                third_id = await page.locator("span.finder-uniq-id").nth(0).inner_text()
-                user_info = {
-                    'account_id':third_id,
-                    'username':await page.locator("h2.finder-nickname").nth(0).inner_text(),
-                    'avatar':await page.locator("img.avatar").nth(0).get_attribute("src")
-                }
-                # 保存cookie
-                account_file = f"{account_file_path}/{account_id}_{third_id}_account.json"
-                await context.storage_state(path=account_file)
-                # 保存登录状态
-                cache_data(f"tencent_login_status_{account_id}",1,60)
-                # 保存抖音账号的登录状态，时间一个周
-                cache_data(f"tencent_login_status_third_{account_id}_{third_id}",1,86400)
-            # 关闭浏览器
+            user_info = await _read_weixin_identity(page, cookies)
+
+            third_id = user_info.get("account_id") or ""
+            if not third_id:
+                third_id = f"wx{int(time.time())}"
+                user_info["account_id"] = third_id
+                report("未能读取到视频号 ID，已用临时 ID 代替（不影响发布）", "WARN")
+            if not user_info.get("username"):
+                user_info["username"] = third_id
+
+            account_file = f"{account_file_path}/{account_id}_{third_id}_account.json"
+            await context.storage_state(path=account_file)
+            cache_data(f"tencent_login_status_{account_id}", 1, 60)
+            cache_data(f"tencent_login_status_third_{account_id}_{third_id}", 1, 86400)
+
             await context.close()
             await browser.close()
-            await playwright.stop()
+            report(f"视频号账号已保存：{user_info['username']}（{third_id}）")
             return user_info
-    except:
+    except LoginAborted as exc:
+        LAST_LOGIN_ERROR = str(exc)
+        report(LAST_LOGIN_ERROR, "WARN")
+        return False
+    except Exception as exc:
+        LAST_LOGIN_ERROR = f"{type(exc).__name__}: {exc}"
+        report_exc("视频号登录失败", exc)
         return False
 
 
@@ -189,10 +384,26 @@ class TencentVideo(object):
         await file_input.set_input_files(self.file_path)
 
     async def upload(self, playwright: Playwright) -> None:
-        # 使用 firefox (这里使用系统内浏览器，用chromium 会造成h264错误
-        browser = await playwright.chromium.launch(headless=False,channel="chrome")
+        # 视频号对 h264 编码有要求，优先使用系统 Chrome；未安装时回退内置 Chromium
+        launch_kwargs = {"headless": headless_enabled()}
+        chrome_path = _find_chrome()
+        if chrome_path:
+            launch_kwargs["executable_path"] = chrome_path
+            print(f"  [-] 使用系统 Chrome：{chrome_path}")
+        else:
+            print("  [!] 未检测到系统 Chrome，回退内置 Chromium（若视频转码失败请安装 Chrome）")
+        browser = await playwright.chromium.launch(**launch_kwargs)
         # 创建一个浏览器上下文，使用指定的 cookie 文件
-        context = await browser.new_context(storage_state=f"{self.account_file}")
+        context_kwargs = {"storage_state": f"{self.account_file}"}
+        if launch_kwargs["headless"]:
+            # 无头模式 UA 带 HeadlessChrome，视频号会把 /post/create 重定向回首页，
+            # 表单因此永远不出现；伪装成同版本正常 Chrome 即可。
+            version = (browser.version or "140.0.0.0").strip()
+            context_kwargs["user_agent"] = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                f"(KHTML, like Gecko) Chrome/{version} Safari/537.36"
+            )
+        context = await browser.new_context(**context_kwargs)
         
         # 创建一个新的页面
         page = await context.new_page()
@@ -200,18 +411,26 @@ class TencentVideo(object):
         await page.goto("https://channels.weixin.qq.com/platform/post/create")
         print('[+]正在上传-------{}'.format(self.file_path))
         # 等待页面跳转到指定的 URL，没进入，则自动等待到超时
-        await page.wait_for_url("https://channels.weixin.qq.com/platform/post/create")
-        # await page.wait_for_selector('input[type="file"]', timeout=10000)
-        # file_input = page.locator('input[type="file"]')
-        # await page.screenshot(path="/home/www/matrix/videos/0.png")
-        # await file_input.set_input_files(self.file_path)
-        # await page.screenshot(path="/home/www/matrix/videos/1.png")
-        upload_div_loc = page.locator("div.upload-content")
-        # await upload_div_loc.wait_for()
-        async with page.expect_file_chooser() as fc_info:
-            await upload_div_loc.click()
-        file_chooser = await fc_info.value
-        await file_chooser.set_files(self.file_path)
+        try:
+            await page.wait_for_url("https://channels.weixin.qq.com/platform/post/create", timeout=20000)
+        except Exception:
+            if "login" in page.url:
+                raise RuntimeError("视频号登录已失效，请到账号页重新扫码登录")
+            raise
+        if "login" in page.url:
+            raise RuntimeError("视频号登录已失效，请到账号页重新扫码登录")
+        # 直接给文件输入框塞文件：「点击上传」区域的 class 和文案会变，输入框相对稳定
+        file_input = page.locator('input[type="file"]').first
+        try:
+            await file_input.wait_for(state="attached", timeout=30000)
+            await file_input.set_input_files(self.file_path)
+        except Exception as exc:
+            print(f"  [!] 文件输入框不可用，改用点击上传区域：{type(exc).__name__}")
+            upload_div_loc = page.locator("div.upload-content").first
+            async with page.expect_file_chooser() as fc_info:
+                await upload_div_loc.click()
+            file_chooser = await fc_info.value
+            await file_chooser.set_files(self.file_path)
         # 填充标题和话题
         await self.add_title_tags(page)
         # 添加位置
@@ -248,70 +467,98 @@ class TencentVideo(object):
             await short_title_element.fill(short_title)
 
     async def click_publish(self, page):
-        while True:
-            try:
-                publish_buttion = page.locator('div.form-btns button:has-text("发表")')
-                if await publish_buttion.count():
-                    await publish_buttion.click()
-                await page.wait_for_url("https://channels.weixin.qq.com/platform/post/list", timeout=10000)
+        publish_button = page.locator('div.form-btns button:has-text("发表")')
+        if not await publish_button.count():
+            publish_button = page.get_by_role("button", name="发表", exact=True)
+        if not await publish_button.count():
+            raise RuntimeError("未找到「发表」按钮，发布页结构可能已变化")
+        if os.environ.get("MATRIX_DRY_RUN") == "1":
+            print("  [!] 干跑模式：已就绪到发表按钮，不实际点击")
+            return
+        await publish_button.first.click()
+        print("  [-] 已点击发表，等待结果...")
+
+        deadline = time.time() + 300
+        while time.time() < deadline:
+            if "/platform/post/list" in page.url:
                 print("  [-]视频发布成功")
-                break
-            except Exception as e:
-                current_url = page.url
-                if "https://channels.weixin.qq.com/platform/post/list" in current_url:
-                    print("  [-]视频发布成功")
-                    break
-                else:
-                    print(f"  [-] Exception: {e}")
-                    print("  [-] 视频正在发布中...")
-                    await page.screenshot(full_page=True)
-                    await asyncio.sleep(0.5)
+                return
+            await asyncio.sleep(2)
+        # 不当作失败：可能已经发出去了，重试会造成重复作品
+        report("发表后 5 分钟没有跳到作品列表，请到后台确认是否已发布", "WARN")
 
     async def detact_upload_status(self, page):
-        while True:
-            # 匹配删除按钮，代表视频上传完毕，如果不存在，代表视频正在上传，则等待
+        """等上传完成：发表按钮不再禁用即视为传完。
+
+        旧实现是 while True，一旦「更换封面」或「发表」按钮不存在就永远卡在
+        except 里，界面上只会看到一直"正在上传"，发布永远不会发生。
+        """
+        deadline = time.time() + 900
+        started = time.time()
+        while time.time() < deadline:
             try:
-                # 匹配删除按钮，代表视频上传完毕
-                button_info = await page.get_by_role("button", name="发表").get_attribute(
-                        'class')
-                if "weui-desktop-btn_disabled" not in button_info:
-                    print("  [-]视频上传完毕")
-                    # 上传完毕修改封面图
-                    # 等待处理完预览图
-                    await asyncio.sleep(2)
-                    preview_button_info = await page.locator('div.finder-tag-wrap.btn:has-text("更换封面")').get_attribute(
-                                    'class')
-                    if "disabled" not in preview_button_info:
-                        await page.locator('div.finder-tag-wrap.btn:has-text("更换封面")').click()
-                        await page.locator('div.single-cover-uploader-wrap > div.wrap').hover()
-                        if await page.locator(".del-wrap > .svg-icon").count():
-                            await page.locator(".del-wrap > .svg-icon").click()
-                        preview_upload_div_loc = page.locator("div.single-cover-uploader-wrap > div.wrap")
-                        #await upload_div_loc.wait_for()
-                        async with page.expect_file_chooser() as fc_info:
-                            await preview_upload_div_loc.click()
-                        preview_file_chooser = await fc_info.value
-                        await preview_file_chooser.set_files(self.video_preview)
-                        #await page.locator('div.single-cover-uploader-wrap > input').set_input_files(self.video_preview)
-                        await asyncio.sleep(2)
-                        await page.get_by_role("button", name="确定").click()
-                        await asyncio.sleep(1)
-                        await page.get_by_role("button", name="确认").click()
-                        break
-                else:
+                button = page.get_by_role("button", name="发表")
+                if not await button.count():
+                    # 表单没渲染出来时不能无限空转：多半是浏览器不支持 h264 或页面结构变了
+                    if time.time() - started > 90 and not await page.locator(
+                            "div.input-editor, div[contenteditable='true']").count():
+                        raise RuntimeError(
+                            "视频号发布页没有加载出表单，请确认客户端使用系统 Chrome（内置 Chromium 缺少 h264 支持）")
                     print("  [-] 正在上传视频中...")
-                    await asyncio.sleep(2)
-                    # 出错了视频出错
+                    await asyncio.sleep(3)
+                    continue
+                button_info = await button.first.get_attribute("class") or ""
+                if "weui-desktop-btn_disabled" in button_info:
+                    print("  [-] 正在上传视频中...")
+                    await asyncio.sleep(3)
                     if await page.locator('div.status-msg.error').count() and await page.locator(
                             'div.media-status-content div.tag-inner:has-text("删除")').count():
                         print("  [-] 发现上传出错了...")
                         await self.handle_upload_error(page)
-            except:
+                    continue
+                print("  [-]视频上传完毕")
+                break
+            except Exception:
                 print("  [-] 正在上传视频中...")
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
+        else:
+            print("  [!] 等待上传完成超时，继续尝试发布")
+
+        # 更换封面：拿不到入口就跳过，不能因此卡住发布
+        if not self.video_preview or not os.path.exists(self.video_preview):
+            return
+        try:
+            cover = page.locator('div.finder-tag-wrap.btn:has-text("更换封面")').first
+            if not await cover.count():
+                print("  [!] 没有封面入口，跳过封面设置")
+                return
+            await asyncio.sleep(2)
+            cover_info = await cover.get_attribute("class") or ""
+            if "disabled" in cover_info:
+                return
+            await cover.click()
+            await page.locator('div.single-cover-uploader-wrap > div.wrap').hover()
+            if await page.locator(".del-wrap > .svg-icon").count():
+                await page.locator(".del-wrap > .svg-icon").click()
+            preview_upload_div_loc = page.locator("div.single-cover-uploader-wrap > div.wrap")
+            async with page.expect_file_chooser() as fc_info:
+                await preview_upload_div_loc.click()
+            preview_file_chooser = await fc_info.value
+            await preview_file_chooser.set_files(self.video_preview)
+            await asyncio.sleep(2)
+            await page.get_by_role("button", name="确定").click()
+            await asyncio.sleep(1)
+            await page.get_by_role("button", name="确认").click()
+        except Exception as exc:
+            print(f"  [!] 设置封面失败，跳过：{type(exc).__name__}: {exc}")
 
     async def add_title_tags(self, page):
-        await page.locator("div.input-editor").click()
+        editor = page.locator("div.input-editor").first
+        if not await editor.count():
+            editor = page.locator("div[contenteditable='true']").first
+        if not await editor.count():
+            raise RuntimeError("未找到视频号的标题/描述输入框，发布页结构可能已变化")
+        await editor.click()
         await page.keyboard.type(self.title)
         if self.tags:
             await page.keyboard.press("Enter")

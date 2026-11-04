@@ -170,3 +170,11 @@ cython_debug/
 #youtube_uploader/*.json
 #douyin_uploader/*.json
 #bilibili_uploader/*.json
+# ---- 桌面客户端构建产物 ----
+dist/
+build_tmp/
+.venv-desktop/
+data/
+desktop/resources/app.ico
+desktop/build/shots/
+*.spec.bak

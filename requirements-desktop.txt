@@ -1,0 +1,16 @@
+# 桌面客户端（PySide6 GUI）运行时依赖
+# 安装：pip install -r requirements-desktop.txt
+#
+# 注意：根目录的 requirements.txt 是原命令行版（MySQL/Redis/eventlet 那套）的依赖，
+# 桌面客户端不需要它们，单独用这个文件即可。
+
+PySide6-Essentials>=6.6
+playwright>=1.44
+requests>=2.31
+qrcode>=7.4
+pillow>=10.0
+lxml>=5.0
+xhs>=0.2.13
+
+# 仅打包 exe 时需要（不打包可忽略）
+pyinstaller>=6.6
