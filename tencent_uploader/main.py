@@ -11,7 +11,7 @@ import sys
 from utils.files_times import get_absolute_path
 from utils.cache_store import cache_data
 from utils.browser_login import LoginAborted, pick_id_by_cookies, wait_for_login
-from utils.browser_mode import headless_enabled
+from utils.browser_mode import find_chrome_executable, headless_enabled
 from utils.login_diag import report, report_exc
 
 LOGIN_TIMEOUT = 300
@@ -52,14 +52,9 @@ def _find_chrome() -> str:
             if path and os.path.exists(path):
                 return path
         return ""
-    try:
-        out = subprocess.run(
-            ["which", "google-chrome"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            timeout=3, check=True,
-        ).stdout.decode().strip()
-        return out if out and os.path.exists(out) else ""
-    except Exception:
-        return ""
+    # macOS / Linux 统一走 browser_mode 的探测（macOS 的 Chrome 在 .app 包内，
+    # 这里以前只 which google-chrome，Mac 上会永远找不到而回退到缺 h264 的内置内核）
+    return find_chrome_executable()
 
 
 
@@ -417,6 +412,11 @@ class TencentVideo(object):
             if "login" in page.url:
                 raise RuntimeError("视频号登录已失效，请到账号页重新扫码登录")
             raise
+        if "login" in page.url:
+            raise RuntimeError("视频号登录已失效，请到账号页重新扫码登录")
+        # /post/create 有时先返回成功、随后才被 302 到 login.html。只判断一次会漏掉，
+        # 后面找上传框要白等 60 秒才失败。这里再确认一次。
+        await page.wait_for_timeout(1500)
         if "login" in page.url:
             raise RuntimeError("视频号登录已失效，请到账号页重新扫码登录")
         # 直接给文件输入框塞文件：「点击上传」区域的 class 和文案会变，输入框相对稳定

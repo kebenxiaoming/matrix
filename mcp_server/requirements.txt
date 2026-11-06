@@ -1,0 +1,13 @@
+# 视频矩阵分发 MCP server 依赖
+#
+# 刻意不包含 PySide6：MCP 进程只做发布，不需要 GUI。
+# 安装：pip install -r mcp_server/requirements.txt
+# 浏览器内核：python -m playwright install chromium
+
+mcp>=2.3
+playwright>=1.44
+requests>=2.31
+qrcode>=7.4
+pillow>=10.0
+lxml>=5.0
+xhs>=0.2.13

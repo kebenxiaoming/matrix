@@ -1,0 +1,64 @@
+name: build-macos
+
+# 没有 Mac 时，用 GitHub 自带的 macOS 机器出包。
+# 手动触发：仓库 Actions 页 → build-macos → Run workflow
+# 打 tag 触发：git tag v1.0.0 && git push origin v1.0.0
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: macos-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon
+          - runner: macos-15
+            arch: arm64
+          # Intel；若该标签在你的仓库不可用，删掉这三行即可，arm64 版已能覆盖绝大多数用户
+          - runner: macos-15-intel
+            arch: x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-desktop.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-desktop.txt
+          python -m pip install pyinstaller
+
+      - name: 构建 .app 与 dmg
+        run: python desktop/build/build_macos.py --skip-deps
+
+      - name: 归集产物
+        run: |
+          mkdir -p out
+          if ls dist_mac/*.dmg >/dev/null 2>&1; then
+            cp dist_mac/*.dmg "out/matrix-publisher-${{ matrix.arch }}.dmg"
+          else
+            # dmg 失败时至少保住 .app
+            ditto -c -k --sequesterRsrc --keepParent \
+              "dist_mac/视频矩阵分发.app" "out/matrix-publisher-${{ matrix.arch }}.zip"
+          fi
+          ls -lh out
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-publisher-macos-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14

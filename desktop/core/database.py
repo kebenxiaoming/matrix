@@ -198,15 +198,21 @@ def delete_account(account_id: int) -> None:
 
 # --------------------------------------------------------------------------- 任务
 
-def create_tasks(account_ids: list[int], payload: dict[str, Any]) -> int:
+def create_tasks_detailed(account_ids: list[int],
+                          payload: dict[str, Any]) -> tuple[str, list[int]]:
+    """创建任务并返回 (batch_id, 新建的 task id 列表)。
+
+    MCP 需要拿到 task_id 才能回查状态，原 create_tasks 只返回条数。
+    """
     ts = _now()
     batch_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    created: list[int] = []
     with _LOCK:
         for account_id in account_ids:
             account = get_account(account_id)
             if not account:
                 continue
-            conn().execute(
+            cursor = conn().execute(
                 "INSERT INTO tasks (batch_id, account_id, platform, title, description, tags,"
                 " video_path, cover_path, location, publish_at, status, created_at, updated_at)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)",
@@ -218,8 +224,19 @@ def create_tasks(account_ids: list[int], payload: dict[str, Any]) -> int:
                     payload.get("publish_at", ""), ts, ts,
                 ),
             )
+            if cursor.lastrowid:
+                created.append(int(cursor.lastrowid))
         conn().commit()
-    return len(account_ids)
+    return batch_id, created
+
+
+def create_tasks(account_ids: list[int], payload: dict[str, Any]) -> int:
+    _, created = create_tasks_detailed(account_ids, payload)
+    return len(created)
+
+
+def list_batch_tasks(batch_id: str) -> list[dict[str, Any]]:
+    return _rows("SELECT * FROM tasks WHERE batch_id=? ORDER BY id ASC", (batch_id,))
 
 
 def list_tasks(status: int | None = None, limit: int = 500) -> list[dict[str, Any]]:

@@ -57,6 +57,21 @@ def find_chrome_executable() -> str:
             if path and not path.startswith("%") and os.path.exists(path):
                 return path
         return ""
+
+    if sys.platform == "darwin":
+        # macOS 的 Chrome 在 .app 包内，可执行文件路径是固定的；
+        # 同时兜底 Edge/Chromium（同为 Chromium 内核，支持 h264），最后才回内置浏览器。
+        candidates = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return ""
+
     for path in ("/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
                  "/opt/google/chrome/chrome"):
         if os.path.exists(path):
@@ -65,10 +80,21 @@ def find_chrome_executable() -> str:
 
 
 def chrome_user_agent(browser_version: str) -> str:
-    """按实际 Chrome 版本拼一个正常 UA（无头模式下 UA 带 HeadlessChrome）。"""
+    """按实际 Chrome 版本拼一个正常 UA（无头模式下 UA 带 HeadlessChrome）。
+
+    按当前系统给对应平台串：UA 里的平台和 navigator.platform 不一致时，
+    视频号/抖音的风控更容易触发验证。
+    """
     version = (browser_version or "140.0.0.0").strip()
+    if sys.platform == "darwin":
+        # Apple Silicon 的 Chrome 同样上报 x86_64 平台串，保持一致即可
+        platform_token = "Macintosh; Intel Mac OS X 10_15_7"
+    elif sys.platform.startswith("win"):
+        platform_token = "Windows NT 10.0; Win64; x64"
+    else:
+        platform_token = "X11; Linux x86_64"
     return (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        f"Mozilla/5.0 ({platform_token}) AppleWebKit/537.36 "
         f"(KHTML, like Gecko) Chrome/{version} Safari/537.36"
     )
 

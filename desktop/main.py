@@ -31,9 +31,16 @@ def _setup_playwright_env() -> None:
 
     if not paths.is_frozen():
         return
-    bundled = paths.app_root() / "ms-playwright"
-    if bundled.exists():
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
+    candidates = [paths.app_root() / "ms-playwright"]
+    if sys.platform == "darwin":
+        # .app 里资源可能在 Contents/Resources 或 Contents/Frameworks
+        candidates.append(paths.app_root().parent / "Resources" / "ms-playwright")
+        candidates.append(paths.app_root().parent / "Frameworks" / "ms-playwright")
+    candidates.append(paths.resource_root() / "ms-playwright")
+    for bundled in candidates:
+        if bundled.is_dir():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
+            return
 
 
 def _install_excepthook(log_file: Path) -> None:

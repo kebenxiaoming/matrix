@@ -176,5 +176,22 @@ build_tmp/
 .venv-desktop/
 data/
 desktop/resources/app.ico
+desktop/resources/app.icns
 desktop/build/shots/
 *.spec.bak
+
+# ---- 打包脚本必须进版本库 ----
+# 上面的 build/ 和 *.spec 会把 desktop/build/ 整个挡掉，
+# 导致别人拉代码后没有打包脚本，这里显式放行。
+!desktop/build/
+!desktop/build/**
+!desktop/build/*.spec
+
+# 放行之后必须再把不要的排除掉（git 以最后匹配的规则为准）
+desktop/build/__pycache__/
+desktop/build/shots/
+desktop/build/*.pyc
+
+# macOS 构建产物
+dist_mac/
+dist_mac_old_*/

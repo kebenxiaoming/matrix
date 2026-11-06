@@ -31,10 +31,27 @@ def app_root() -> Path:
 
 
 def resource_root() -> Path:
-    """随包分发的只读资源目录。"""
+    """随包分发的只读资源目录。
+
+    macOS 的 .app 结构里 datas 落在 Contents/Resources，而 sys._MEIPASS 指向
+    Contents/Frameworks，两者不一致，所以按"哪个目录里真有 xhs_uploader"来判定。
+    """
     if is_frozen():
-        # onedir 模式：_MEIPASS 指向 _internal；onefile 模式：指向临时解包目录
-        return Path(getattr(sys, "_MEIPASS", app_root()))
+        mei = Path(getattr(sys, "_MEIPASS", app_root()))
+        candidates: list[Path] = []
+        if sys.platform == "darwin":
+            candidates.append(app_root().parent / "Resources")
+        candidates.append(mei)
+        if sys.platform == "darwin":
+            candidates.append(app_root().parent / "Frameworks")
+        candidates.append(app_root())
+        for candidate in candidates:
+            if (candidate / "xhs_uploader").exists():
+                return candidate
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return mei
     return app_root() / "desktop" / "resources"
 
 
@@ -52,11 +69,24 @@ def _is_writable(path: Path) -> bool:
 _DATA_ROOT: Path | None = None
 
 
+def _system_data_dir() -> Path:
+    """各系统的标准用户数据目录。"""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_DIR_NAME
+    if sys.platform.startswith("win"):
+        return Path(os.environ.get("APPDATA", Path.home())) / APP_DIR_NAME
+    base = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    return Path(base) / APP_DIR_NAME
+
+
 def data_root() -> Path:
     """可写的用户数据目录。
 
-    优先使用 exe 同级的 data 目录（绿色便携，拷走即可迁移），
-    若该位置不可写（例如装在 Program Files）则退回到 %APPDATA%。
+    Windows/Linux：优先使用 exe 同级的 data 目录（绿色便携，拷走即可迁移），
+    若该位置不可写（例如装在 Program Files）则退回到系统数据目录。
+
+    macOS：打包后 .app 是 bundle，往 Contents/MacOS/data 写会让签名失效，
+    且升级替换 .app 时数据会丢，所以固定用 ~/Library/Application Support。
     """
     global _DATA_ROOT
     if _DATA_ROOT is not None:
@@ -69,12 +99,18 @@ def data_root() -> Path:
         _DATA_ROOT = candidate
         return _DATA_ROOT
 
+    if sys.platform == "darwin" and is_frozen():
+        roaming = _system_data_dir()
+        roaming.mkdir(parents=True, exist_ok=True)
+        _DATA_ROOT = roaming
+        return _DATA_ROOT
+
     portable = app_root() / "data"
     if _is_writable(portable):
         _DATA_ROOT = portable
         return _DATA_ROOT
 
-    roaming = Path(os.environ.get("APPDATA", Path.home())) / APP_DIR_NAME
+    roaming = _system_data_dir()
     roaming.mkdir(parents=True, exist_ok=True)
     _DATA_ROOT = roaming
     return _DATA_ROOT
