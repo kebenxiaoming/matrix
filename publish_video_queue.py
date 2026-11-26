@@ -243,7 +243,7 @@ while True:
                         # 类型不对直接改为失败
                         publishFail(mycursor,queue_id,3)
                         continue
-                except:
+                except Exception as err:
                     # cookie认证报错，将任务改为失败后跳过
                     publishFail(mycursor,queue_id,3) 
                     print(f"Error: {err}") 
